@@ -21,6 +21,15 @@ class Repository:
         self.conn.execute("PRAGMA foreign_keys = ON")
         self.conn.execute("PRAGMA journal_mode = WAL")
         self._create_schema()
+        self._ensure_columns()
+
+    def _ensure_columns(self) -> None:
+        with self._lock:
+            columns = {row["name"] for row in self.conn.execute("PRAGMA table_info(items)")}
+            for ddl in ("payload TEXT", "plan TEXT", "actual_discharge REAL"):
+                if ddl.split()[0] not in columns:
+                    with self.conn:
+                        self.conn.execute(f"ALTER TABLE items ADD COLUMN {ddl}")
 
     def _create_schema(self) -> None:
         statuses = ",".join("'" + s.replace("'", "''") + "'" for s in STATES)
@@ -36,6 +45,9 @@ class Repository:
                     status TEXT NOT NULL CHECK(status IN ({statuses})),
                     version INTEGER NOT NULL DEFAULT 1,
                     external_ref TEXT,
+                    payload TEXT,
+                    plan TEXT,
+                    actual_discharge REAL,
                     created_by TEXT NOT NULL,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
@@ -69,20 +81,29 @@ class Repository:
 
     @staticmethod
     def _item(row: sqlite3.Row) -> Dict[str, Any]:
-        return dict(row)
+        item = dict(row)
+        payload = item.pop("payload", None)
+        item["inputs"] = json.loads(payload) if payload else None
+        plan = item.pop("plan", None)
+        item["plan"] = json.loads(plan) if plan else None
+        item.setdefault("actual_discharge", None)
+        return item
 
     def create_item(self, title: str, description: str, severity: str,
                     quantity: float, threshold: float, external_ref: Optional[str],
-                    actor: str) -> Dict[str, Any]:
+                    actor: str, inputs: Optional[dict] = None,
+                    plan: Optional[dict] = None) -> Dict[str, Any]:
         now = utc_now()
+        payload_json = json.dumps(inputs, ensure_ascii=False, sort_keys=True) if inputs is not None else None
+        plan_json = json.dumps(plan, ensure_ascii=False, sort_keys=True) if plan is not None else None
         try:
             with self._lock, self.conn:
                 cur = self.conn.execute(
                     """INSERT INTO items(title, description, severity, quantity, threshold,
-                       status, version, external_ref, created_by, created_at, updated_at)
-                       VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+                       status, version, external_ref, payload, plan, created_by, created_at, updated_at)
+                       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                     (title, description, severity, quantity, threshold, STATES[0], 1,
-                     external_ref, actor, now, now),
+                     external_ref, payload_json, plan_json, actor, now, now),
                 )
                 item_id = int(cur.lastrowid)
         except sqlite3.IntegrityError as exc:
@@ -156,6 +177,33 @@ class Repository:
                 (item_id,),
             ).fetchone()
         return int(row["n"])
+
+    def latest_record_id(self, item_id: int, kind: str) -> int:
+        with self._lock:
+            row = self.conn.execute(
+                "SELECT MAX(id) AS n FROM records WHERE item_id=? AND kind=?",
+                (item_id, kind),
+            ).fetchone()
+        return int(row["n"] or 0)
+
+    def close_records(self, item_id: int, kind: str) -> None:
+        with self._lock, self.conn:
+            self.conn.execute(
+                "UPDATE records SET status='closed' WHERE item_id=? AND kind=? AND status='open'",
+                (item_id, kind),
+            )
+
+    def set_feedback(self, item_id: int, actual_discharge: float) -> Dict[str, Any]:
+        now = utc_now()
+        with self._lock, self.conn:
+            cur = self.conn.execute(
+                """UPDATE items SET actual_discharge=?, version=version+1, updated_at=?
+                   WHERE id=?""",
+                (actual_discharge, now, item_id),
+            )
+            if cur.rowcount == 0:
+                raise NotFoundError("项目不存在")
+        return self.get_item(item_id)
 
     def append_audit(self, action: str, entity_type: str, entity_id: int,
                      actor: str, detail: dict) -> Dict[str, Any]:

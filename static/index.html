@@ -1,1 +1,99 @@
-<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>水库防汛调度与操作确认</title><style>body{font-family:-apple-system,BlinkMacSystemFont,sans-serif;max-width:900px;margin:2rem auto;padding:0 1rem;color:#17212b}pre{background:#f4f7f9;padding:1rem;overflow:auto}button{padding:.55rem 1rem}</style></head><body><h1>水库防汛调度与操作确认</h1><p>根据库位、入库流量、下游警戒和施工限制生成复核授权的泄洪指令</p><p>库位超过汛限或入库流量上升时提升紧迫度；授权前必须有复核记录，执行后仍要闭环现场反馈。</p><button onclick="loadItems()">刷新列表</button><pre id="out">使用X-Actor和X-Role请求头调用接口。</pre><script>async function loadItems(){const r=await fetch('/api/items',{headers:{'X-Actor':'demo','X-Role':'viewer'}});document.getElementById('out').textContent=JSON.stringify(await r.json(),null,2)}</script></body></html>
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>水库防汛调度与操作确认</title><style>
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;max-width:1000px;margin:1.5rem auto;padding:0 1rem;color:#17212b}
+fieldset{border:1px solid #d5dde3;border-radius:8px;margin-bottom:1rem}
+label{display:inline-block;margin:.3rem .8rem .3rem 0;font-size:.9rem}
+input,select,textarea{padding:.35rem;font-size:.9rem}
+button{padding:.45rem .9rem;margin:.15rem;cursor:pointer}
+.item{border:1px solid #d5dde3;border-radius:8px;padding:.7rem;margin:.6rem 0}
+.item h3{margin:.1rem 0 .4rem;font-size:1rem}
+.tag{display:inline-block;background:#eef3f6;border-radius:4px;padding:.1rem .5rem;margin-right:.4rem;font-size:.8rem}
+.warn{color:#b3261e}.ok{color:#1b6e3c}
+pre{background:#f4f7f9;padding:.8rem;overflow:auto;font-size:.8rem}
+textarea{width:100%;box-sizing:border-box}
+</style></head><body>
+<h1>水库防汛调度与操作确认</h1>
+<p>值班员录入库位、汛限、入库流量、涨幅、下游警戒、施工限制和可用闸门，系统给出下泄流量和闸门数。下游严重告警时下泄量不超过入库流量一半；受限闸门默认不选用；库位仍上涨或需启用受限闸门时，总工复核后才能授权；执行后实际流量偏差超过一成须说明原因并退回待复核。</p>
+<fieldset><legend>身份</legend>
+<label>姓名 <input id="actor" value="夜班-张三"></label>
+<label>角色 <select id="role">
+<option value="duty_officer">值班员 duty_officer</option>
+<option value="chief_engineer">总工 chief_engineer</option>
+<option value="dispatcher">调度员 dispatcher</option>
+<option value="viewer">查看 viewer</option>
+</select></label></fieldset>
+<fieldset><legend>录入泄洪调度单（值班员）</legend>
+<label>标题 <input id="title" value="夜班泄洪调度"></label>
+<label>库位(m) <input id="reservoir_level" type="number" step="0.01" value="146.2"></label>
+<label>汛限(m) <input id="flood_limit" type="number" step="0.01" value="145"></label>
+<label>入库流量(m³/s) <input id="inflow" type="number" step="1" value="1800"></label>
+<label>涨幅(m/h) <input id="rise_rate" type="number" step="0.01" value="0.2"></label>
+<label>下游警戒 <select id="downstream_alarm"><option value="normal">正常</option><option value="warning">警戒</option><option value="severe">严重告警</option></select></label>
+<label>情况说明 <input id="description" value="夜班录入，下游有施工围堰" size="30"></label>
+<label>可用闸门（JSON，restricted表示施工受限）</label>
+<textarea id="gates" rows="3">[{"id":"G1","capacity":800},{"id":"G2","capacity":800},{"id":"G3","capacity":500,"restricted":true}]</textarea>
+<button onclick="createOrder()">生成调度单</button></fieldset>
+<fieldset><legend>调度单列表 <button onclick="refresh()">刷新</button></legend>
+<div id="items"></div></fieldset>
+<pre id="out">操作结果会显示在这里。</pre>
+<script>
+const $=id=>document.getElementById(id);
+const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+function hdrs(){return {'Content-Type':'application/json','X-Actor':$('actor').value,'X-Role':$('role').value}}
+async function api(method,url,body){
+  const r=await fetch(url,{method,headers:hdrs(),body:body?JSON.stringify(body):undefined});
+  const data=await r.json().catch(()=>({}));
+  if(!r.ok){show(data);throw new Error(data.message||r.status)}
+  return data;
+}
+function show(x){$('out').textContent=typeof x==='string'?x:JSON.stringify(x,null,2)}
+async function createOrder(){
+  try{
+    const body={title:$('title').value,description:$('description').value,severity:'routine',
+      reservoir_level:+$('reservoir_level').value,flood_limit:+$('flood_limit').value,
+      inflow:+$('inflow').value,rise_rate:+$('rise_rate').value,
+      downstream_alarm:$('downstream_alarm').value,gates:JSON.parse($('gates').value)};
+    show(await api('POST','/api/items',body));refresh();
+  }catch(e){}
+}
+async function refresh(){
+  try{
+    const data=await api('GET','/api/items');
+    $('items').innerHTML=data.items.map(renderItem).join('')||'暂无调度单';
+    show(data.items.map(i=>({id:i.id,title:i.title,status:i.status,severity:i.severity,plan:i.plan,actual_discharge:i.actual_discharge})));
+  }catch(e){}
+}
+function renderItem(i){
+  const p=i.plan||{};
+  const plan=p.planned_discharge!==undefined?
+    `计划下泄 <b>${p.planned_discharge}</b> m³/s，闸门 <b>${esc((p.gate_ids||[]).join(',')||'无')}</b>（${p.gate_count}扇）`+
+    (p.capped_by_downstream?'，<span class="warn">下游严重告警按入库一半封顶</span>':'')+
+    (p.needs_restricted?'，<span class="warn">需启用受限闸门</span>':'')+
+    (p.review_required?'，<span class="warn">须总工复核</span>':'')+'<br>':'';
+  const actual=i.actual_discharge!=null?`实际下泄 <b>${i.actual_discharge}</b> m³/s，偏差 ${(i.deviation*100).toFixed(1)}%`+
+    (i.deviation_exceeded?' <span class="warn">超过一成</span>':' <span class="ok">在一成内</span>')+'<br>':'';
+  let btns='';
+  if(i.status==='draft')btns+=btn('核对',`act(${i.id},'checked',${i.version})`);
+  if(i.status==='checked')btns+=btn('总工复核',`review(${i.id})`)+btn('授权',`act(${i.id},'authorized',${i.version})`);
+  if(i.status==='authorized')btns+=btn('执行',`act(${i.id},'executed',${i.version})`);
+  if(i.status==='executed')btns+=btn('登记反馈',`feedback(${i.id})`)+btn('闭环',`act(${i.id},'closed',${i.version})`);
+  btns+=btn('记录',`records(${i.id})`);
+  return `<div class="item"><h3>#${i.id} ${esc(i.title)} <span class="tag">${i.status}</span><span class="tag">${i.severity}</span></h3>${plan}${actual}${btns}</div>`;
+}
+const btn=(t,f)=>`<button onclick="${f}">${t}</button>`;
+async function act(id,target,version){
+  try{show(await api('POST',`/api/items/${id}/transition`,{target,expected_version:version}));refresh()}catch(e){}
+}
+async function review(id){
+  const detail=prompt('总工复核意见：','同意按方案泄洪');if(!detail)return;
+  try{show(await api('POST',`/api/items/${id}/records`,{kind:'review',detail}));refresh()}catch(e){}
+}
+async function feedback(id){
+  const v=prompt('实际下泄流量(m³/s)：');if(v===null)return;
+  const reason=prompt('偏差原因（偏差超过一成时必填）：')||'';
+  try{show(await api('POST',`/api/items/${id}/feedback`,{actual_discharge:+v,reason}));refresh()}catch(e){}
+}
+async function records(id){
+  try{show(await api('GET',`/api/items/${id}/records`))}catch(e){}
+}
+refresh();
+</script></body></html>

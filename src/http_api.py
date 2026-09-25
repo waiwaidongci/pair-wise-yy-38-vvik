@@ -119,6 +119,11 @@ def make_handler(service: Service, static_dir: str):
                     expected = body.get("expected_version")
                     self._json(200, service.transition(
                         item_id, target, expected, actor, role))
+                elif path.startswith("/api/items/") and path.endswith("/feedback"):
+                    item_id = int(path.split("/")[3])
+                    self._json(200, service.feedback(
+                        item_id, body.get("actual_discharge"),
+                        body.get("reason"), actor, role))
                 else:
                     self._json(404, {"error": "not_found"})
             except Exception as exc:
