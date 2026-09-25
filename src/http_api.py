@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Tuple
 from urllib.parse import parse_qs, urlparse
 
 from .domain import (ConflictError, DomainError, NotFoundError, PermissionDenied,
@@ -15,7 +15,7 @@ def make_handler(service: Service, static_dir: str):
     root = Path(static_dir)
 
     class Handler(BaseHTTPRequestHandler):
-        server_version = "ModularHell/1.0"
+        server_version = "FloodDispatch/1.0"
 
         def log_message(self, fmt: str, *args: Any) -> None:
             return
@@ -75,29 +75,29 @@ def make_handler(service: Service, static_dir: str):
 
         def do_GET(self) -> None:
             try:
-                path = urlparse(self.path).path
+                parsed = urlparse(self.path)
+                path = parsed.path
+                query = parse_qs(parsed.query)
+                actor, role = self._identity()
                 if path == "/health":
                     self._json(200, {"status": "ok"})
                 elif path == "/":
                     self._html(root / "index.html")
-                elif path == "/api/items":
-                    actor, role = self._identity()
-                    del actor
-                    self._json(200, {"items": service.list_items(role)})
-                elif path.startswith("/api/items/") and path.endswith("/records"):
-                    item_id = int(path.split("/")[3])
-                    actor, role = self._identity()
-                    del actor
-                    self._json(200, {"records": service.list_records(item_id, role)})
-                elif path.startswith("/api/items/"):
-                    item_id = int(path.rsplit("/", 1)[-1])
-                    actor, role = self._identity()
-                    del actor
-                    self._json(200, service.get_item(item_id, role))
+                elif path == "/api/orders":
+                    status = query.get("status", [None])[0]
+                    self._json(200, {"orders": service.list_orders(role, status)})
+                elif path.startswith("/api/orders/") and path.endswith("/records"):
+                    order_id = int(path.split("/")[3])
+                    self._json(200, {"records": service.list_records(order_id, role)})
+                elif path.startswith("/api/orders/"):
+                    order_id = int(path.rsplit("/", 1)[-1])
+                    self._json(200, service.get_order(order_id, role))
                 elif path == "/api/audit":
-                    actor, role = self._identity()
-                    del actor
-                    self._json(200, {"events": service.audit(role)})
+                    order_id = query.get("order_id", [None])[0]
+                    order_id = int(order_id) if order_id else None
+                    self._json(200, {"events": service.audit(role, order_id)})
+                elif path == "/api/audit/verify":
+                    self._json(200, {"valid": service.verify_audit(role)})
                 else:
                     self._json(404, {"error": "not_found"})
             except Exception as exc:
@@ -108,17 +108,27 @@ def make_handler(service: Service, static_dir: str):
                 path = urlparse(self.path).path
                 actor, role = self._identity()
                 body = self._body()
-                if path == "/api/items":
-                    self._json(201, service.create_item(body, actor, role))
-                elif path.startswith("/api/items/") and path.endswith("/records"):
-                    item_id = int(path.split("/")[3])
-                    self._json(201, service.add_record(item_id, body, actor, role))
-                elif path.startswith("/api/items/") and path.endswith("/transition"):
-                    item_id = int(path.split("/")[3])
-                    target = body.get("target")
-                    expected = body.get("expected_version")
-                    self._json(200, service.transition(
-                        item_id, target, expected, actor, role))
+                if path == "/api/orders/preview":
+                    self._json(200, service.preview(body, role))
+                elif path == "/api/orders":
+                    self._json(201, service.create_order(body, actor, role))
+                elif path.startswith("/api/orders/") and path.endswith("/records"):
+                    order_id = int(path.split("/")[3])
+                    self._json(201, service.add_record(order_id, body, actor, role))
+                elif path.startswith("/api/orders/") and path.endswith("/authorize"):
+                    order_id = int(path.split("/")[3])
+                    self._json(200, service.authorize(
+                        order_id, body.get("expected_version"), actor, role))
+                elif path.startswith("/api/orders/") and path.endswith("/execute"):
+                    order_id = int(path.split("/")[3])
+                    self._json(200, service.execute(order_id, body, actor, role))
+                elif path.startswith("/api/orders/") and path.endswith("/close"):
+                    order_id = int(path.split("/")[3])
+                    self._json(200, service.close_order(
+                        order_id, body.get("expected_version"), actor, role))
+                elif path.startswith("/api/records/") and path.endswith("/close"):
+                    record_id = int(path.split("/")[3])
+                    self._json(200, service.close_record(record_id, actor, role))
                 else:
                     self._json(404, {"error": "not_found"})
             except Exception as exc:

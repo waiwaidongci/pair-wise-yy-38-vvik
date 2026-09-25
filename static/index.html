@@ -1,1 +1,609 @@
-<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>水库防汛调度与操作确认</title><style>body{font-family:-apple-system,BlinkMacSystemFont,sans-serif;max-width:900px;margin:2rem auto;padding:0 1rem;color:#17212b}pre{background:#f4f7f9;padding:1rem;overflow:auto}button{padding:.55rem 1rem}</style></head><body><h1>水库防汛调度与操作确认</h1><p>根据库位、入库流量、下游警戒和施工限制生成复核授权的泄洪指令</p><p>库位超过汛限或入库流量上升时提升紧迫度；授权前必须有复核记录，执行后仍要闭环现场反馈。</p><button onclick="loadItems()">刷新列表</button><pre id="out">使用X-Actor和X-Role请求头调用接口。</pre><script>async function loadItems(){const r=await fetch('/api/items',{headers:{'X-Actor':'demo','X-Role':'viewer'}});document.getElementById('out').textContent=JSON.stringify(await r.json(),null,2)}</script></body></html>
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>水库泄洪调度单 · 夜班复核演示</title>
+<style>
+  :root{
+    --bg:#eef3f8; --panel:#fff; --ink:#16242f; --muted:#5d7180; --line:#d9e2ea;
+    --brand:#0e5f8b; --brand-d:#0a4a6d; --accent:#1585b7;
+    --amber:#b26a00; --amber-bg:#fdf3e0;
+    --red:#b3261e; --red-bg:#fdecea;
+    --blue:#1155cc; --blue-bg:#e8f0fe;
+    --teal:#0f766e; --teal-bg:#e6f4f2;
+    --gray:#5f6b76; --gray-bg:#eef1f4;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;
+       background:var(--bg);color:var(--ink);font-size:14px;line-height:1.55}
+  header.top{background:linear-gradient(120deg,var(--brand-d),var(--brand));color:#fff;padding:14px 22px;
+       display:flex;align-items:center;gap:16px;flex-wrap:wrap}
+  header.top h1{font-size:18px;margin:0;font-weight:600;letter-spacing:.5px}
+  header.top .sub{opacity:.82;font-size:12px}
+  header.top .idbox{margin-left:auto;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  header.top input,header.top select{background:rgba(255,255,255,.92);border:0;border-radius:6px;
+       padding:6px 10px;font-size:13px;color:var(--ink)}
+  nav.tabs{background:#fff;border-bottom:1px solid var(--line);display:flex;padding:0 18px;gap:4px}
+  nav.tabs button{border:0;background:none;padding:13px 18px;font-size:14px;color:var(--muted);
+       cursor:pointer;border-bottom:3px solid transparent;font-weight:500}
+  nav.tabs button.active{color:var(--brand);border-bottom-color:var(--accent)}
+  main{max-width:1080px;margin:20px auto;padding:0 16px 60px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:18px 20px;margin-bottom:16px}
+  .card h2{margin:0 0 14px;font-size:15px;color:var(--brand-d)}
+  .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px 16px}
+  .grid label{display:block;font-size:12px;color:var(--muted);margin-bottom:4px}
+  .grid input,.grid select,.grid textarea{width:100%;padding:8px 10px;border:1px solid var(--line);
+       border-radius:6px;font-size:13px;background:#fbfdff}
+  .grid input:focus,.grid select:focus,textarea:focus{outline:2px solid rgba(21,133,183,.25);border-color:var(--accent)}
+  .span2{grid-column:span 2}
+  .span3{grid-column:span 3}
+  table{border-collapse:collapse;width:100%;font-size:13px}
+  th,td{border:1px solid var(--line);padding:7px 9px;text-align:left}
+  th{background:#f4f8fb;font-weight:600;color:var(--muted);font-size:12px}
+  td input,td select{width:100%;border:1px solid var(--line);border-radius:5px;padding:5px 7px;font-size:13px}
+  .btn{display:inline-block;border:1px solid var(--brand);background:var(--brand);color:#fff;border-radius:6px;
+       padding:8px 18px;font-size:13px;cursor:pointer}
+  .btn:hover{background:var(--brand-d)}
+  .btn.secondary{background:#fff;color:var(--brand)}
+  .btn.danger{background:var(--red);border-color:var(--red)}
+  .btn.ghost{background:#fff;color:var(--muted);border-color:var(--line)}
+  .btn:disabled{opacity:.45;cursor:not-allowed}
+  .row-actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:14px}
+  .preview{background:#f4f9fc;border:1px solid #cfe2ee;border-radius:8px;padding:14px 16px;margin-top:6px}
+  .metrics{display:flex;gap:14px;flex-wrap:wrap;margin:6px 0 10px}
+  .metric{background:#fff;border:1px solid var(--line);border-radius:8px;padding:10px 16px;min-width:150px}
+  .metric .k{font-size:12px;color:var(--muted)}
+  .metric .v{font-size:22px;font-weight:700;color:var(--brand-d);margin-top:2px}
+  .metric .u{font-size:12px;color:var(--muted);font-weight:400}
+  ul.notes{margin:6px 0 0;padding-left:20px}
+  ul.notes li{margin:3px 0}
+  .badge{display:inline-block;border-radius:11px;padding:2px 10px;font-size:12px;font-weight:600}
+  .b-draft{background:var(--amber-bg);color:var(--amber)}
+  .b-authorized{background:var(--blue-bg);color:var(--blue)}
+  .b-executed{background:var(--teal-bg);color:var(--teal)}
+  .b-recheck{background:var(--red-bg);color:var(--red)}
+  .b-closed{background:var(--gray-bg);color:var(--gray)}
+  .b-emergency{background:var(--red-bg);color:var(--red)}
+  .b-urgent{background:var(--amber-bg);color:var(--amber)}
+  .b-attention{background:var(--blue-bg);color:var(--blue)}
+  .b-routine{background:var(--gray-bg);color:var(--gray)}
+  .banner{border-radius:8px;padding:10px 14px;margin:8px 0;font-size:13px}
+  .banner.red{background:var(--red-bg);color:var(--red);border:1px solid #f0b8b4}
+  .banner.amber{background:var(--amber-bg);color:var(--amber);border:1px solid #ecd3a8}
+  .banner.blue{background:var(--blue-bg);color:var(--blue);border:1px solid #b8cdf5}
+  table.list{background:#fff}
+  table.list tbody tr{cursor:pointer}
+  table.list tbody tr:hover{background:#f5fafd}
+  .filters{display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;align-items:center}
+  .filters button{border:1px solid var(--line);background:#fff;border-radius:16px;padding:5px 14px;
+       font-size:12px;cursor:pointer;color:var(--muted)}
+  .filters button.active{background:var(--brand);color:#fff;border-color:var(--brand)}
+  .modal-mask{position:fixed;inset:0;background:rgba(15,30,42,.45);display:none;align-items:flex-start;
+       justify-content:center;z-index:20;overflow:auto;padding:30px 12px}
+  .modal{background:#fff;border-radius:12px;max-width:820px;width:100%;padding:22px 26px;margin:auto}
+  .modal h3{margin:0 0 4px;color:var(--brand-d);font-size:17px}
+  .modal .meta{color:var(--muted);font-size:12px;margin-bottom:12px}
+  .kv{display:grid;grid-template-columns:repeat(3,1fr);gap:8px 18px;font-size:13px;margin:8px 0}
+  .kv div span{color:var(--muted);margin-right:6px}
+  textarea{width:100%;border:1px solid var(--line);border-radius:6px;padding:9px 11px;font-size:13px;
+       font-family:inherit;resize:vertical}
+  .timeline{list-style:none;margin:8px 0 0;padding:0;border-left:2px solid var(--line)}
+  .timeline li{padding:4px 0 10px 16px;position:relative;font-size:13px}
+  .timeline li:before{content:"";position:absolute;left:-6px;top:9px;width:10px;height:10px;border-radius:50%;
+       background:var(--accent);border:2px solid #fff}
+  .timeline .t{color:var(--muted);font-size:11px}
+  #toast{position:fixed;right:18px;bottom:18px;max-width:420px;z-index:40;display:flex;
+       flex-direction:column;gap:8px}
+  .toast{background:#102634;color:#eaf3f8;padding:10px 16px;border-radius:8px;font-size:13px;
+       box-shadow:0 6px 20px rgba(0,0,0,.25);animation:in .2s ease}
+  .toast.err{background:var(--red)}
+  @keyframes in{from{opacity:0;transform:translateY(8px)}}
+  .muted{color:var(--muted);font-size:12px}
+  .rule-strip{background:#0a4a6d;color:#dcebf5;border-radius:8px;padding:8px 14px;font-size:12px;margin-bottom:14px}
+  code{background:#eef3f6;padding:1px 5px;border-radius:4px;font-size:12px}
+</style>
+</head>
+<body>
+<header class="top">
+  <div>
+    <h1>水库泄洪调度单</h1>
+    <div class="sub">夜班水情录入 → 系统测算 → 总工复核授权 → 执行反馈闭环</div>
+  </div>
+  <div class="idbox">
+    <input id="actor" value="李值班" size="9" placeholder="操作人">
+    <select id="role">
+      <option value="duty_officer">值班员</option>
+      <option value="chief_engineer">总工</option>
+      <option value="dispatcher">调度执行员</option>
+      <option value="viewer">观摩</option>
+    </select>
+  </div>
+</header>
+
+<nav class="tabs">
+  <button data-tab="entry" class="active">① 水情录入与测算</button>
+  <button data-tab="orders">② 调度单复核与执行</button>
+  <button data-tab="audit">③ 调度单与审计查看</button>
+</nav>
+
+<main>
+  <div class="rule-strip">
+    硬规则：下游严重告警时，下泄量 ≤ 入库流量的 50%；检修闸门不可选，受限闸门仅在能力不足时补充；
+    库位仍上涨或需启用受限闸门，须总工复核授权；执行后实际偏差 &gt; 10% 须说明原因并退回待复核。
+  </div>
+
+  <!-- ============ 录入 ============ -->
+  <section id="tab-entry">
+    <div class="card">
+      <h2>水情与工情录入</h2>
+      <div class="grid">
+        <div><label>库位（m）</label><input id="f-level" type="number" step="0.01" value="94.80"></div>
+        <div><label>汛限水位（m）</label><input id="f-flood" type="number" step="0.01" value="95.00"></div>
+        <div><label>入库流量（m³/s）</label><input id="f-inflow" type="number" step="1" value="200"></div>
+        <div><label>涨幅（m/小时，回落填负）</label><input id="f-rise" type="number" step="0.01" value="0"></div>
+        <div><label>下游情况</label>
+          <select id="f-downstream">
+            <option value="normal">正常</option>
+            <option value="warning">警戒</option>
+            <option value="severe">严重告警</option>
+          </select>
+        </div>
+        <div><label>施工限制说明</label><input id="f-construction" placeholder="如：2号闸进口施工，受限运行"></div>
+        <div class="span3">
+          <label>可用闸门清单（状态：可用 / 受限-施工限制 / 检修-不可用）</label>
+          <table>
+            <thead><tr><th style="width:18%">闸门</th><th style="width:30%">状态</th>
+              <th style="width:22%">单孔能力(m³/s)</th><th style="width:10%"></th></tr></thead>
+            <tbody id="gate-rows"></tbody>
+          </table>
+          <div class="row-actions"><button class="btn ghost" id="add-gate" type="button">＋ 增加闸门</button></div>
+        </div>
+      </div>
+      <div class="row-actions">
+        <button class="btn secondary" id="btn-sample" type="button">填入严重告警样例</button>
+        <button class="btn" id="btn-preview" type="button">试算方案（不落库）</button>
+        <button class="btn" id="btn-create" type="button">生成调度单</button>
+      </div>
+    </div>
+
+    <div class="card" id="preview-card" style="display:none">
+      <h2>系统测算结果</h2>
+      <div id="preview-banners"></div>
+      <div class="metrics">
+        <div class="metric"><div class="k">建议下泄流量</div><div class="v" id="pv-flow">–</div>
+          <div class="u">m³/s</div></div>
+        <div class="metric"><div class="k">开启闸门数</div><div class="v" id="pv-gates">–</div>
+          <div class="u">孔</div></div>
+        <div class="metric"><div class="k">紧迫度</div><div class="v" id="pv-sev">–</div></div>
+        <div class="metric"><div class="k">复核要求</div><div class="v" id="pv-review" style="font-size:15px">–</div></div>
+      </div>
+      <div><b>拟开闸门：</b><span id="pv-gate-names">–</span></div>
+      <ul class="notes" id="pv-notes"></ul>
+    </div>
+  </section>
+
+  <!-- ============ 调度单 ============ -->
+  <section id="tab-orders" style="display:none">
+    <div class="card">
+      <h2>调度单列表（点击进入复核 / 执行）</h2>
+      <div class="filters" id="status-filters">
+        <button data-status="" class="active">全部</button>
+        <button data-status="draft">待复核</button>
+        <button data-status="authorized">已授权</button>
+        <button data-status="executed">已执行</button>
+        <button data-status="recheck">退回复核</button>
+        <button data-status="closed">已闭环</button>
+        <button class="ghost" id="btn-reload" style="margin-left:auto">刷新</button>
+      </div>
+      <table class="list">
+        <thead><tr><th>单号</th><th>录入时间</th><th>库位/汛限</th><th>入库</th><th>下泄/孔数</th>
+          <th>下游</th><th>紧迫度</th><th>状态</th></tr></thead>
+        <tbody id="order-rows"><tr><td colspan="8" class="muted">加载中…</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ============ 审计 ============ -->
+  <section id="tab-audit" style="display:none">
+    <div class="card">
+      <h2>审计链（SHA-256 防篡改）</h2>
+      <div class="row-actions" style="margin-top:0">
+        <button class="btn secondary" id="btn-verify">校验审计链完整性</button>
+        <span id="verify-result"></span>
+      </div>
+      <table class="list" style="margin-top:12px">
+        <thead><tr><th>#</th><th>时间(UTC)</th><th>动作</th><th>对象</th><th>操作人</th><th>明细</th></tr></thead>
+        <tbody id="audit-rows"><tr><td colspan="6" class="muted">仅总工 / 观摩可查看</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+</main>
+
+<!-- 详情弹窗 -->
+<div class="modal-mask" id="modal-mask">
+  <div class="modal" id="modal"></div>
+</div>
+<div id="toast"></div>
+
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c =>
+  ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const STATE_LABELS = {draft:"待复核",authorized:"已授权",executed:"已执行",recheck:"退回复核",closed:"已闭环"};
+const SEV_LABELS = {routine:"常规",attention:"关注",urgent:"紧急",emergency:"特急"};
+const DOWN_LABELS = {normal:"正常",warning:"警戒",severe:"严重告警"};
+const GATE_LABELS = {available:"可用",restricted:"受限",maintenance:"检修"};
+
+const headers = () => ({
+  "Content-Type":"application/json",
+  "X-Actor": $("#actor").value.trim() || "未署名",
+  "X-Role": $("#role").value
+});
+const role = () => $("#role").value;
+
+async function api(method, url, body){
+  const opt = {method, headers:headers()};
+  if (body !== undefined) opt.body = JSON.stringify(body);
+  const r = await fetch(url, opt);
+  const data = await r.json().catch(()=>({}));
+  if (!r.ok) throw new Error(data.message || (data.error || `请求失败 ${r.status}`));
+  return data;
+}
+function toast(msg, isErr){
+  const el = document.createElement("div");
+  el.className = "toast" + (isErr ? " err" : "");
+  el.textContent = msg;
+  $("#toast").appendChild(el);
+  setTimeout(()=>el.remove(), 4200);
+}
+const fmtTime = t => t ? t.replace("T"," ").replace("+00:00","Z") : "";
+
+/* ---------- 闸门编辑器 ---------- */
+function gateRow(g){
+  return `<tr>
+    <td><input class="g-name" value="${esc(g.name)}"></td>
+    <td><select class="g-state">
+      <option value="available"${g.state==="available"?" selected":""}>可用</option>
+      <option value="restricted"${g.state==="restricted"?" selected":""}>受限（施工限制，需总工授权）</option>
+      <option value="maintenance"${g.state==="maintenance"?" selected":""}>检修（不可选用）</option>
+    </select></td>
+    <td><input class="g-cap" type="number" min="0" step="10" value="${g.capacity}"></td>
+    <td><button class="btn ghost g-del" type="button">删除</button></td>
+  </tr>`;
+}
+const defaultGates = () => ([
+  {name:"1号闸",state:"available",capacity:300},
+  {name:"2号闸",state:"restricted",capacity:300},
+  {name:"3号闸",state:"available",capacity:300},
+  {name:"4号闸",state:"available",capacity:250},
+  {name:"5号闸",state:"restricted",capacity:250},
+  {name:"6号闸",state:"maintenance",capacity:300},
+]);
+function renderGates(list){ $("#gate-rows").innerHTML = list.map(gateRow).join(""); }
+function readGates(){
+  return [...document.querySelectorAll("#gate-rows tr")].map(tr => ({
+    name: tr.querySelector(".g-name").value.trim(),
+    state: tr.querySelector(".g-state").value,
+    capacity: Number(tr.querySelector(".g-cap").value)
+  }));
+}
+$("#gate-rows").addEventListener("click", e => {
+  if (e.target.classList.contains("g-del")) e.target.closest("tr").remove();
+});
+$("#add-gate").onclick = () => $("#gate-rows")
+  .insertAdjacentHTML("beforeend", gateRow({name:`${document.querySelectorAll("#gate-rows tr").length+1}号闸`,state:"available",capacity:300}));
+
+function readForm(){
+  return {
+    level: Number($("#f-level").value),
+    flood_limit: Number($("#f-flood").value),
+    inflow: Number($("#f-inflow").value),
+    rise: Number($("#f-rise").value || 0),
+    downstream: $("#f-downstream").value,
+    construction_limit: $("#f-construction").value.trim(),
+    gates: readGates()
+  };
+}
+$("#btn-sample").onclick = () => {
+  $("#f-level").value = "96.20"; $("#f-flood").value = "95.00";
+  $("#f-inflow").value = "600"; $("#f-rise").value = "0.30";
+  $("#f-downstream").value = "severe";
+  $("#f-construction").value = "2号、5号闸进口段施工，受限运行";
+  renderGates(defaultGates());
+  toast("已填入：下游严重告警 + 库位超汛限上涨样例");
+};
+
+/* ---------- 试算 ---------- */
+function renderPreview(plan){
+  $("#preview-card").style.display = "";
+  const banners = [];
+  if (plan.severe_cap_applied)
+    banners.push(`<div class="banner red">⛔ 下游严重告警：下泄量已压减至入库流量的 50%（${plan.planned_flow} m³/s），受限闸门不得选用以外不得超限。</div>`);
+  if (plan.chief_review_required)
+    banners.push(`<div class="banner amber">⚠ 触发总工复核：${plan.level_rising?"库位仍在上涨；":""}${plan.uses_restricted_gates?"需启用受限闸门；":""}总工复核授权后方可执行。</div>`);
+  if (plan.capacity_shortfall)
+    banners.push(`<div class="banner red">⛔ 全部非检修闸门能力不足（${plan.available_capacity} m³/s），须总工紧急处置。</div>`);
+  $("#preview-banners").innerHTML = banners.join("");
+  $("#pv-flow").textContent = plan.planned_flow;
+  $("#pv-gates").textContent = plan.gate_count;
+  $("#pv-sev").innerHTML = `<span class="badge b-${plan.severity}">${SEV_LABELS[plan.severity]}</span>`;
+  $("#pv-review").innerHTML = plan.chief_review_required
+    ? '<span class="badge b-recheck">总工复核</span>' : '<span class="badge b-executed">值班直发</span>';
+  $("#pv-gate-names").textContent = plan.selected_gates.length
+    ? plan.selected_gates.map(g=>`${g.name}(${GATE_LABELS[g.state]})`).join("、") : "不开闸";
+  $("#pv-notes").innerHTML = plan.notes.map(n=>`<li>${esc(n)}</li>`).join("");
+  return plan;
+}
+$("#btn-preview").onclick = async () => {
+  try {
+    const data = await api("POST","/api/orders/preview", readForm());
+    renderPreview(data.plan);
+  } catch(e){ toast(e.message, true); }
+};
+$("#btn-create").onclick = async () => {
+  if (role() !== "duty_officer") return toast("只有值班员可以录入调度单，请切换到值班员身份", true);
+  try {
+    const data = await api("POST","/api/orders/preview", readForm());
+    const order = await api("POST","/api/orders", readForm());
+    toast(`调度单 ${order.order_no} 已生成：下泄 ${order.planned_flow} m³/s，${order.gate_count} 孔` +
+          (order.chief_review_required ? "，等待总工复核" : ""));
+    switchTab("orders");
+    loadOrders(currentStatus);
+    openOrder(order.id);
+  } catch(e){ toast(e.message, true); }
+};
+
+/* ---------- Tab 切换 ---------- */
+let currentStatus = "";
+function switchTab(name){
+  document.querySelectorAll("nav.tabs button").forEach(b =>
+    b.classList.toggle("active", b.dataset.tab === name));
+  ["entry","orders","audit"].forEach(n =>
+    $("#tab-"+n).style.display = n === name ? "" : "none");
+  if (name === "orders") loadOrders(currentStatus);
+  if (name === "audit") loadAudit();
+}
+document.querySelectorAll("nav.tabs button").forEach(b => b.onclick = () => switchTab(b.dataset.tab));
+$("#role").addEventListener("change", () => {
+  const map = {duty_officer:"李值班",chief_engineer:"张总工",dispatcher:"王调度",viewer:"观摩员"};
+  if (!$("#actor").value.trim()) $("#actor").value = map[role()];
+  else $("#actor").value = map[role()];
+});
+$("#status-filters").addEventListener("click", e => {
+  const btn = e.target.closest("button[data-status]");
+  if (btn && e.target.id !== "btn-reload") {
+    document.querySelectorAll("#status-filters button[data-status]")
+      .forEach(b=>b.classList.toggle("active", b === btn));
+    currentStatus = btn.dataset.status;
+    loadOrders(currentStatus);
+  }
+});
+$("#btn-reload").onclick = () => loadOrders(currentStatus);
+
+/* ---------- 调度单列表 ---------- */
+async function loadOrders(status){
+  const tbody = $("#order-rows");
+  try {
+    const data = await api("GET","/api/orders"+(status?`?status=${status}`:""));
+    if (!data.orders.length) {
+      tbody.innerHTML = `<tr><td colspan="8" class="muted">暂无调度单（值班员可在“水情录入”页生成）</td></tr>`;
+      return;
+    }
+    tbody.innerHTML = data.orders.map(o => `
+      <tr data-id="${o.id}">
+        <td><b>${o.order_no}</b></td>
+        <td class="muted">${fmtTime(o.created_at)}</td>
+        <td>${o.level.toFixed(2)} / ${o.flood_limit.toFixed(2)}</td>
+        <td>${o.inflow}${o.rise ? ` <span class="muted">(${o.rise>0?"+":""}${o.rise}m/h)</span>`:""}</td>
+        <td>${o.planned_flow} / ${o.gate_count}孔</td>
+        <td>${DOWN_LABELS[o.downstream]}</td>
+        <td><span class="badge b-${o.severity}">${SEV_LABELS[o.severity]}</span></td>
+        <td><span class="badge b-${o.status}">${STATE_LABELS[o.status]}</span></td>
+      </tr>`).join("");
+    tbody.querySelectorAll("tr[data-id]").forEach(tr =>
+      tr.onclick = () => openOrder(Number(tr.dataset.id)));
+  } catch(e){ tbody.innerHTML = `<tr><td colspan="8">${esc(e.message)}</td></tr>`; }
+}
+
+/* ---------- 调度单详情 / 操作 ---------- */
+async function openOrder(id){
+  $("#modal-mask").style.display = "flex";
+  try {
+    const [o, rec] = await Promise.all([
+      api("GET",`/api/orders/${id}`),
+      api("GET",`/api/orders/${id}/records`)
+    ]);
+    renderOrder(o, rec.records);
+  } catch(e){ toast(e.message, true); $("#modal-mask").style.display="none"; }
+}
+$("#modal-mask").addEventListener("click", e => {
+  if (e.target.id === "modal-mask") $("#modal-mask").style.display = "none";
+});
+
+function gateBadges(o){
+  return o.gates.map(g=>{
+    const used = o.selected_gates.includes(g.name);
+    const color = used ? "b-executed" : g.state==="maintenance" ? "b-closed" : "b-routine";
+    return `<span class="badge ${color}" style="margin:2px">${esc(g.name)} ${GATE_LABELS[g.state]}${used?" ✓ 开":"（关）"}</span>`;
+  }).join(" ");
+}
+
+function renderOrder(o, records){
+  const isChief = role()==="chief_engineer", isDisp = role()==="dispatcher",
+        isDuty = role()==="duty_officer", canRecord = isChief||isDisp||isDuty;
+  let actions = "";
+
+  if (o.status === "draft" || o.status === "recheck") {
+    if (isChief) {
+      actions = `
+        <div class="banner blue">请总工核对水情、闸门与硬规则后登记复核意见并授权。
+          ${o.chief_review_required?'<b>本单属于“库位上涨/受限闸门”必须复核情形。</b>':''}</div>
+        <textarea id="review-text" rows="2" placeholder="总工复核意见（必填，授权依据）"></textarea>
+        <div class="row-actions">
+          <button class="btn" id="act-add-review">登记复核意见</button>
+          <button class="btn" id="act-authorize">复核通过并授权下泄</button>
+        </div>`;
+    } else {
+      actions = `<div class="banner amber">当前状态：${STATE_LABELS[o.status]}，等待总工复核授权（切换总工身份操作）。</div>`;
+    }
+  } else if (o.status === "authorized") {
+    if (isDisp) {
+      actions = `
+        <div class="banner blue">已授权，请现场开闸后回填实际下泄流量。偏差超过计划 10% 必须填写原因，单据将退回总工复核。</div>
+        <div class="grid">
+          <div><label>实际下泄流量（m³/s）</label><input id="actual-flow" type="number" step="1" value="${o.planned_flow}"></div>
+          <div class="span2"><label>偏差原因（偏差&gt;10%时必填）</label><input id="deviation-reason"></div>
+          <div class="span3" id="dev-hint" class="muted"></div>
+        </div>
+        <div class="row-actions"><button class="btn" id="act-execute">回填实际流量</button></div>`;
+    } else {
+      actions = `<div class="banner blue">已授权，等待调度执行员开闸并回填实际流量。</div>`;
+    }
+  } else if (o.status === "executed") {
+    actions = isChief
+      ? `<div class="banner ${o.within_tolerance?"":"red"}">实际 ${o.actual_flow} m³/s，偏差 ${(o.deviation_ratio*100).toFixed(1)}% —— `+
+        `${o.within_tolerance?"在一成容差内。":"超出一成，已退回待复核。"}</div>
+        <div class="row-actions"><button class="btn" id="act-close">总工确认闭环</button></div>`
+      : `<div class="banner teal">已执行，等待总工确认闭环。</div>`;
+  } else {
+    actions = `<div class="banner" style="background:var(--gray-bg);color:var(--gray)">单据已闭环归档。</div>`;
+  }
+
+  const noteBox = canRecord && o.status !== "closed" ? `
+    <div class="row-actions" style="align-items:flex-start">
+      <input id="note-text" style="flex:1;padding:8px 10px;border:1px solid var(--line);border-radius:6px"
+             placeholder="补充说明（现场情况、工情变化等）">
+      <button class="btn ghost" id="act-add-note">添加说明</button>
+    </div>` : "";
+
+  $("#modal").innerHTML = `
+    <h3>调度单 ${esc(o.order_no)}
+      <span class="badge b-${o.status}">${STATE_LABELS[o.status]}</span>
+      <span class="badge b-${o.severity}">${SEV_LABELS[o.severity]}</span></h3>
+    <div class="meta">录入：${esc(o.created_by)} · ${fmtTime(o.created_at)} · 版本 v${o.version} · 响应时限 ${o.deadline_hours}h</div>
+    <div class="kv">
+      <div><span>库位</span>${o.level.toFixed(2)} m</div>
+      <div><span>汛限</span>${o.flood_limit.toFixed(2)} m</div>
+      <div><span>涨幅</span>${o.rise>0?"+":""}${o.rise} m/h</div>
+      <div><span>入库流量</span>${o.inflow} m³/s</div>
+      <div><span>计划下泄</span><b>${o.planned_flow} m³/s</b></div>
+      <div><span>开启</span>${o.gate_count} 孔</div>
+      <div><span>下游情况</span>${DOWN_LABELS[o.downstream]}</div>
+      <div class="span" style="grid-column:span 2"><span>施工限制</span>${esc(o.construction_limit||"无")}</div>
+    </div>
+    <div style="margin:6px 0"><b>闸门方案：</b>${gateBadges(o)}</div>
+    ${o.severe_cap_applied?`<div class="banner red">已执行严重告警限泄：下泄 ≤ 入库 50%。</div>`:""}
+    ${o.capacity_shortfall?`<div class="banner red">闸门能力不足，总工须紧急处置。</div>`:""}
+    <ul class="notes">${o.plan_notes.map(n=>`<li>${esc(n)}</li>`).join("")}</ul>
+    ${o.actual_flow !== null ? `<div class="banner ${o.within_tolerance?"":"red"}" style="margin-top:10px">
+        执行反馈：实际 <b>${o.actual_flow}</b> m³/s，偏差 <b>${(o.deviation_ratio*100).toFixed(1)}%</b>
+        ${o.deviation_reason?`；原因：${esc(o.deviation_reason)}`:""}</div>`:""}
+    <h2 style="margin-top:16px">操作与复核记录</h2>
+    <ul class="timeline">${records.map(r=>`
+      <li><span class="badge ${r.kind==="review"?"b-authorized":"b-routine"}">${r.kind==="review"?"复核意见":"说明"}</span>
+        ${r.status==="closed"?'<span class="muted">[已闭环]</span>':""}
+        ${esc(r.detail)}<div class="t">${esc(r.created_by)} · ${fmtTime(r.created_at)}</div></li>`).join("")
+        || `<li class="muted">暂无记录</li>`}</ul>
+    ${noteBox}
+    <div style="margin-top:14px">${actions}</div>
+    <div class="row-actions"><button class="btn ghost" id="act-close-modal">关闭窗口</button></div>`;
+
+  $("#act-close-modal").onclick = () => $("#modal-mask").style.display="none";
+
+  const refresh = async () => {
+    const no = await api("GET",`/api/orders/${id}`);
+    const rr = await api("GET",`/api/orders/${id}/records`);
+    renderOrder(no, rr.records);
+    loadOrders(currentStatus);
+    return no;
+  };
+
+  const noteBtn = $("#act-add-note");
+  if (noteBtn) noteBtn.onclick = async () => {
+    const detail = $("#note-text").value.trim();
+    if (!detail) return toast("请填写说明内容", true);
+    try {
+      await api("POST",`/api/orders/${id}/records`,{kind:"note",detail});
+      toast("说明已添加"); await refresh();
+    } catch(e){ toast(e.message,true); }
+  };
+
+  const revBtn = $("#act-add-review");
+  if (revBtn) revBtn.onclick = async () => {
+    const detail = $("#review-text").value.trim();
+    if (!detail) return toast("请填写复核意见", true);
+    try {
+      await api("POST",`/api/orders/${id}/records`,{kind:"review",detail});
+      toast("复核意见已登记，可以授权"); await refresh();
+    } catch(e){ toast(e.message,true); }
+  };
+
+  const authBtn = $("#act-authorize");
+  if (authBtn) authBtn.onclick = async () => {
+    try {
+      const no = await api("POST",`/api/orders/${id}/authorize`,{expected_version:o.version});
+      toast(`已授权：按 ${no.planned_flow} m³/s 下泄，开 ${no.gate_count} 孔`);
+      await refresh();
+    } catch(e){ toast(e.message,true); }
+  };
+
+  const execBtn = $("#act-execute");
+  if (execBtn) {
+    const hint = () => {
+      const actual = Number($("#actual-flow").value||0);
+      const dev = Math.abs(actual - o.planned_flow) / (o.planned_flow||1);
+      $("#dev-hint").innerHTML = dev > 0.10
+        ? `<span style="color:var(--red)">偏差 ${(dev*100).toFixed(1)}% 超过一成，必须填写原因，提交后退回总工复核。</span>`
+        : `<span class="muted">偏差 ${(dev*100).toFixed(1)}%，在一成容差内。</span>`;
+    };
+    $("#actual-flow").addEventListener("input", hint); hint();
+    execBtn.onclick = async () => {
+      const body = {actual_flow: Number($("#actual-flow").value), expected_version:o.version};
+      const dr = $("#deviation-reason").value.trim();
+      if (dr) body.deviation_reason = dr;
+      try {
+        const no = await api("POST",`/api/orders/${id}/execute`,body);
+        toast(no.status==="recheck" ? "偏差超一成，已退回总工复核" : "执行反馈已登记");
+        await refresh();
+      } catch(e){ toast(e.message,true); }
+    };
+  }
+
+  const closeBtn = $("#act-close");
+  if (closeBtn) closeBtn.onclick = async () => {
+    try {
+      await api("POST",`/api/orders/${id}/close`,{expected_version:o.version});
+      toast("调度单已闭环"); await refresh();
+    } catch(e){ toast(e.message,true); }
+  };
+}
+
+/* ---------- 审计 ---------- */
+async function loadAudit(){
+  const tbody = $("#audit-rows");
+  try {
+    const data = await api("GET","/api/audit");
+    tbody.innerHTML = data.events.map(e=>`
+      <tr><td>${e.id}</td><td class="muted">${fmtTime(e.created_at)}</td>
+        <td><b>${esc(e.action)}</b></td><td>${esc(e.entity_type)} #${e.entity_id}</td>
+        <td>${esc(e.actor)}</td><td><code>${esc(JSON.stringify(e.detail))}</code></td></tr>`).join("")
+        || `<tr><td colspan="6" class="muted">暂无审计事件</td></tr>`;
+  } catch(e){
+    tbody.innerHTML = `<tr><td colspan="6">${esc(e.message)}（仅总工 / 观摩可查看）</td></tr>`;
+  }
+}
+$("#btn-verify").onclick = async () => {
+  try {
+    const r = await api("GET","/api/audit/verify");
+    $("#verify-result").innerHTML = r.valid
+      ? '<span class="badge b-executed">✔ 审计链完整，哈希校验通过</span>'
+      : '<span class="badge b-recheck">✘ 审计链损坏</span>';
+  } catch(e){ toast(e.message,true); }
+};
+
+/* ---------- init ---------- */
+renderGates(defaultGates());
+</script>
+</body>
+</html>
